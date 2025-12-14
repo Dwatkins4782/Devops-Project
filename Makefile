@@ -1,5 +1,14 @@
 .PHONY: help setup build push deploy observability teardown clean test lint verify
 
+# Detect OS
+ifeq ($(OS),Windows_NT)
+    DETECTED_OS := Windows
+    SHELL := powershell.exe
+    .SHELLFLAGS := -NoProfile -Command
+else
+    DETECTED_OS := $(shell uname -s)
+endif
+
 # Variables
 REGISTRY ?= localhost:5555
 IMAGE_NAME ?= devops-app
@@ -9,27 +18,49 @@ NAMESPACE ?= app
 help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
+	@echo 'Detected OS: $(DETECTED_OS)'
+	@echo ''
 	@echo 'Available targets:'
+ifeq ($(DETECTED_OS),Windows)
+	@powershell -Command "Get-Content Makefile | Select-String '##' | ForEach-Object { $$_.Line -replace '^([^:]+):.*## (.*)$$', '  $$1'.PadRight(15) + '$$2' }"
+else
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+endif
 
 setup: ## Set up the entire environment (cluster + registry)
+ifeq ($(DETECTED_OS),Windows)
+	@Write-Host "🚀 Setting up DevOps Challenge Environment" -ForegroundColor Cyan; cd terraform; terraform init; terraform apply -auto-approve; cd ..; kind export kubeconfig --name devops-cluster
+else
 	@echo "🚀 Setting up DevOps Challenge Environment"
 	@./scripts/setup.sh
+endif
 
 build: ## Build the Docker image
+ifeq ($(DETECTED_OS),Windows)
+	@Write-Host "🔨 Building Docker image..." -ForegroundColor Cyan; docker build -t $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) ./app; kind load docker-image $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) --name devops-cluster
+else
 	@echo "🔨 Building Docker image..."
 	@REGISTRY=$(REGISTRY) IMAGE_NAME=$(IMAGE_NAME) IMAGE_TAG=$(IMAGE_TAG) ./scripts/build-and-push.sh
+endif
 
 push: build ## Build and push the Docker image
 	@echo "✅ Build and push complete"
 
 deploy: ## Deploy the application to Kubernetes
+ifeq ($(DETECTED_OS),Windows)
+	@Write-Host "🚀 Deploying application..." -ForegroundColor Cyan; kubectl create namespace $(NAMESPACE) 2>$$null; helm upgrade --install $(IMAGE_NAME) ./helm/app --namespace $(NAMESPACE) --set image.repository=$(REGISTRY)/$(IMAGE_NAME) --set image.tag=$(IMAGE_TAG) --set serviceMonitor.enabled=true --wait --timeout 5m
+else
 	@echo "🚀 Deploying application..."
 	@REGISTRY=$(REGISTRY) IMAGE_NAME=$(IMAGE_NAME) IMAGE_TAG=$(IMAGE_TAG) ./scripts/deploy.sh
+endif
 
 observability: ## Deploy Prometheus and Grafana
+ifeq ($(DETECTED_OS),Windows)
+	@Write-Host "📊 Deploying observability stack..." -ForegroundColor Cyan; helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>$$null; helm repo update; kubectl create namespace monitoring 2>$$null; helm upgrade --install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false --wait --timeout 10m
+else
 	@echo "📊 Deploying observability stack..."
 	@./scripts/deploy-observability.sh
+endif
 
 all: setup build deploy observability ## Set up everything (cluster, build, deploy, observability)
 	@echo "✅ Complete environment is ready!"
