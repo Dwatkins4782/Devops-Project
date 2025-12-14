@@ -9,6 +9,7 @@ terraform.tfvars
 # Kubernetes
 kubeconfig
 *.kubeconfig
+devops-cluster-config
 
 # Python
 __pycache__/
