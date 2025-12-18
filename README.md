@@ -254,6 +254,27 @@ kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 909
 ```
 - **Prometheus**: http://localhost:9090
 
+### Prometheus Installation Details
+
+Prometheus is deployed using Helm and runs in your Kubernetes cluster:
+
+- **Installation Method**: Helm chart (`prometheus-community/kube-prometheus-stack`)
+- **Namespace**: `monitoring`
+- **Service Name**: `prometheus-kube-prometheus-prometheus`
+- **Port**: 9090
+- **Deployment Type**: StatefulSet (for data persistence)
+
+To check which node Prometheus is running on (after cluster is started):
+```bash
+kubectl get pods -n monitoring -o wide | Select-String "prometheus"
+```
+
+To view Prometheus configuration:
+```bash
+kubectl get configmap -n monitoring
+kubectl describe statefulset -n monitoring prometheus-prometheus-kube-prometheus-prometheus
+```
+
 ## 🔄 CI/CD Pipeline
 
 The GitHub Actions workflow (`.github/workflows/ci-cd.yml`) automates:
