@@ -47,3 +47,12 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Documentation (personal notes - not for repo)
+INTERVIEW-PREPARATION.md
+PROJECT-TEMPLATE.md
+New-DevOpsProject.ps1
+install-prerequisites.ps1
+INSTALL-WINDOWS.ps1
+verify-tools.ps1
+continue-deployment.ps1

@@ -35,11 +35,44 @@ kind export kubeconfig --name devops-cluster
 Write-Host "[OK] kubectl configured" -ForegroundColor Green
 Write-Host ""
 
-# Step 3: Build and push image
-Write-Host "Step 3/4: Building Docker image..." -ForegroundColor Yellow
+# Step 3a: Setup local Docker registry
+Write-Host "Step 3a/5: Setting up local Docker registry..." -ForegroundColor Yellow
 $REGISTRY = "localhost:5555"
 $IMAGE_NAME = "devops-app"
 $IMAGE_TAG = "latest"
+
+# Check if registry container exists
+$registryExists = docker ps -a --filter "name=kind-registry" --format "{{.Names}}" 2>$null
+if ($registryExists -eq "kind-registry") {
+    # Start if stopped
+    $registryRunning = docker ps --filter "name=kind-registry" --format "{{.Names}}" 2>$null
+    if ($registryRunning -ne "kind-registry") {
+        Write-Host "Starting existing registry container..." -ForegroundColor Yellow
+        docker start kind-registry
+    } else {
+        Write-Host "Registry already running" -ForegroundColor Green
+    }
+} else {
+    # Create new registry (host port 5555 maps to container port 5000)
+    Write-Host "Creating new registry container..." -ForegroundColor Yellow
+    docker run -d --restart=always -p 5555:5000 --name kind-registry registry:2
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to create registry" -ForegroundColor Red
+        exit 1
+    }
+    Start-Sleep -Seconds 3
+}
+
+# Connect registry to kind network
+Write-Host "Connecting registry to KinD network..." -ForegroundColor Yellow
+docker network connect kind kind-registry 2>$null
+# Ignore error if already connected
+
+Write-Host "[OK] Registry ready at localhost:5555" -ForegroundColor Green
+Write-Host ""
+
+# Step 3b: Build and push image
+Write-Host "Step 3b/5: Building Docker image..." -ForegroundColor Yellow
 
 docker build -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} ./app
 if ($LASTEXITCODE -ne 0) {
@@ -47,14 +80,23 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "Loading image into KinD cluster..." -ForegroundColor Yellow
-kind load docker-image ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} --name devops-cluster
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Failed to load image into KinD" -ForegroundColor Red
-    exit 1
+Write-Host "Pushing image to local registry..." -ForegroundColor Yellow
+docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} 2>&1 | Out-Null
+$pushSuccess = $LASTEXITCODE -eq 0
+
+if (-not $pushSuccess) {
+    Write-Host "Warning: Could not push to registry (may need insecure-registries config)" -ForegroundColor Yellow
+    Write-Host "Falling back to direct image loading..." -ForegroundColor Yellow
+    kind load docker-image ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} --name devops-cluster
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to load image into KinD" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "[OK] Image pushed to registry" -ForegroundColor Green
 }
 
-Write-Host "[OK] Image built and loaded" -ForegroundColor Green
+Write-Host "[OK] Image built and available to cluster" -ForegroundColor Green
 Write-Host ""
 
 # Step 4a: Deploy Observability Stack
