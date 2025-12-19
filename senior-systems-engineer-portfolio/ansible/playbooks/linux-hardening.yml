@@ -1,0 +1,359 @@
+---
+# Linux Hardening Playbook - CIS Benchmark Compliance
+# Implements Center for Internet Security (CIS) controls
+
+- name: Linux Security Hardening
+  hosts: linux
+  become: yes
+  gather_facts: yes
+  
+  vars:
+    ssh_port: 22
+    allowed_ssh_users: ["admin", "ansible"]
+    password_max_days: 90
+    password_min_days: 1
+    password_warn_age: 7
+    login_retries: 3
+    login_timeout: 60
+    
+  pre_tasks:
+    - name: Ensure auditd is installed
+      package:
+        name: "{{ 'auditd' if ansible_os_family == 'RedHat' else 'auditd' }}"
+        state: present
+
+  tasks:
+    # 1. Filesystem Hardening
+    - name: Disable unused filesystems
+      lineinfile:
+        path: /etc/modprobe.d/disabled-filesystems.conf
+        line: "install {{ item }} /bin/true"
+        create: yes
+        mode: '0644'
+      loop:
+        - cramfs
+        - freevxfs
+        - jffs2
+        - hfs
+        - hfsplus
+        - udf
+      tags: [filesystem, cis]
+
+    - name: Set secure mount options for /tmp
+      mount:
+        path: /tmp
+        src: tmpfs
+        fstype: tmpfs
+        opts: "defaults,nodev,nosuid,noexec"
+        state: mounted
+      tags: [filesystem, tmp]
+
+    # 2. SSH Hardening
+    - name: Configure SSH security settings
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^#?{{ item.key }}"
+        line: "{{ item.key }} {{ item.value }}"
+        validate: 'sshd -t -f %s'
+      loop:
+        - { key: 'PermitRootLogin', value: 'no' }
+        - { key: 'PasswordAuthentication', value: 'no' }
+        - { key: 'PermitEmptyPasswords', value: 'no' }
+        - { key: 'Protocol', value: '2' }
+        - { key: 'X11Forwarding', value: 'no' }
+        - { key: 'MaxAuthTries', value: '3' }
+        - { key: 'ClientAliveInterval', value: '300' }
+        - { key: 'ClientAliveCountMax', value: '0' }
+        - { key: 'AllowUsers', value: "{{ allowed_ssh_users | join(' ') }}" }
+      notify: restart sshd
+      tags: [ssh, hardening]
+
+    - name: Set SSH banner
+      copy:
+        content: |
+          ***************************************************************************
+          AUTHORIZED ACCESS ONLY
+          Unauthorized access to this system is forbidden and will be prosecuted.
+          All activities are monitored and logged.
+          ***************************************************************************
+        dest: /etc/ssh/sshd_banner
+        mode: '0644'
+      tags: [ssh]
+
+    - name: Enable SSH banner
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Banner'
+        line: 'Banner /etc/ssh/sshd_banner'
+        validate: 'sshd -t -f %s'
+      notify: restart sshd
+      tags: [ssh]
+
+    # 3. Firewall Configuration
+    - name: Install firewalld (RedHat/CentOS)
+      package:
+        name: firewalld
+        state: present
+      when: ansible_os_family == "RedHat"
+      tags: [firewall]
+
+    - name: Install ufw (Debian/Ubuntu)
+      package:
+        name: ufw
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [firewall]
+
+    - name: Configure firewalld (RedHat)
+      firewalld:
+        service: "{{ item }}"
+        permanent: yes
+        state: enabled
+      loop:
+        - ssh
+        - http
+        - https
+      when: ansible_os_family == "RedHat"
+      notify: reload firewalld
+      tags: [firewall]
+
+    - name: Enable firewalld
+      service:
+        name: firewalld
+        state: started
+        enabled: yes
+      when: ansible_os_family == "RedHat"
+      tags: [firewall]
+
+    - name: Configure ufw (Debian/Ubuntu)
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "22"
+        - "80"
+        - "443"
+      when: ansible_os_family == "Debian"
+      tags: [firewall]
+
+    - name: Enable ufw
+      ufw:
+        state: enabled
+      when: ansible_os_family == "Debian"
+      tags: [firewall]
+
+    # 4. Password Policies
+    - name: Set password aging policies
+      lineinfile:
+        path: /etc/login.defs
+        regexp: "^{{ item.key }}"
+        line: "{{ item.key }}\t{{ item.value }}"
+      loop:
+        - { key: 'PASS_MAX_DAYS', value: "{{ password_max_days }}" }
+        - { key: 'PASS_MIN_DAYS', value: "{{ password_min_days }}" }
+        - { key: 'PASS_WARN_AGE', value: "{{ password_warn_age }}" }
+      tags: [password, security]
+
+    - name: Set strong password requirements (Debian/Ubuntu)
+      apt:
+        name: libpam-pwquality
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [password]
+
+    - name: Configure password quality requirements
+      lineinfile:
+        path: /etc/security/pwquality.conf
+        regexp: "^#?{{ item.key }}"
+        line: "{{ item.key }} = {{ item.value }}"
+      loop:
+        - { key: 'minlen', value: '14' }
+        - { key: 'dcredit', value: '-1' }
+        - { key: 'ucredit', value: '-1' }
+        - { key: 'ocredit', value: '-1' }
+        - { key: 'lcredit', value: '-1' }
+      tags: [password, security]
+
+    # 5. Audit Configuration
+    - name: Configure auditd rules
+      copy:
+        content: |
+          # Audit system calls
+          -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change
+          -a always,exit -F arch=b64 -S clock_settime -k time-change
+          
+          # Audit user/group changes
+          -w /etc/group -p wa -k identity
+          -w /etc/passwd -p wa -k identity
+          -w /etc/gshadow -p wa -k identity
+          -w /etc/shadow -p wa -k identity
+          
+          # Audit network changes
+          -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale
+          -w /etc/issue -p wa -k system-locale
+          -w /etc/issue.net -p wa -k system-locale
+          
+          # Audit login/logout events
+          -w /var/log/faillog -p wa -k logins
+          -w /var/log/lastlog -p wa -k logins
+          -w /var/log/tallylog -p wa -k logins
+          
+          # Audit permission modifications
+          -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod
+          -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod
+          
+          # Make configuration immutable
+          -e 2
+        dest: /etc/audit/rules.d/hardening.rules
+        mode: '0640'
+      notify: restart auditd
+      tags: [audit, compliance]
+
+    - name: Enable auditd service
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+      tags: [audit]
+
+    # 6. Kernel Hardening
+    - name: Configure kernel parameters
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+        sysctl_file: /etc/sysctl.d/99-hardening.conf
+      loop:
+        # IP Forwarding
+        - { key: 'net.ipv4.ip_forward', value: '0' }
+        # ICMP redirects
+        - { key: 'net.ipv4.conf.all.send_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.default.send_redirects', value: '0' }
+        # Source packet routing
+        - { key: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+        - { key: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+        # ICMP redirect acceptance
+        - { key: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+        # Secure ICMP redirects
+        - { key: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+        - { key: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+        # Log suspicious packets
+        - { key: 'net.ipv4.conf.all.log_martians', value: '1' }
+        - { key: 'net.ipv4.conf.default.log_martians', value: '1' }
+        # Ignore broadcast requests
+        - { key: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+        # Ignore ICMP bogus error responses
+        - { key: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+        # TCP SYN cookies
+        - { key: 'net.ipv4.tcp_syncookies', value: '1' }
+        # Reverse path filtering
+        - { key: 'net.ipv4.conf.all.rp_filter', value: '1' }
+        - { key: 'net.ipv4.conf.default.rp_filter', value: '1' }
+        # IPv6 disable (if not used)
+        - { key: 'net.ipv6.conf.all.disable_ipv6', value: '1' }
+        - { key: 'net.ipv6.conf.default.disable_ipv6', value: '1' }
+        # Kernel randomization
+        - { key: 'kernel.randomize_va_space', value: '2' }
+      tags: [kernel, sysctl, hardening]
+
+    # 7. File Permissions
+    - name: Set permissions on critical files
+      file:
+        path: "{{ item.path }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: '/etc/passwd', mode: '0644' }
+        - { path: '/etc/shadow', mode: '0000' }
+        - { path: '/etc/group', mode: '0644' }
+        - { path: '/etc/gshadow', mode: '0000' }
+        - { path: '/boot/grub/grub.cfg', mode: '0400' }
+      tags: [permissions, security]
+
+    # 8. Disable Unnecessary Services
+    - name: Disable unnecessary services
+      service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop:
+        - avahi-daemon
+        - cups
+        - nfs
+        - rpcbind
+      failed_when: false
+      tags: [services, hardening]
+
+    # 9. Install Security Tools
+    - name: Install security monitoring tools
+      package:
+        name:
+          - aide          # Advanced Intrusion Detection Environment
+          - fail2ban      # Brute force protection
+          - rkhunter      # Rootkit detection
+          - lynis         # Security auditing
+        state: present
+      tags: [security-tools]
+
+    - name: Initialize AIDE database
+      command: aide --init
+      args:
+        creates: /var/lib/aide/aide.db.new.gz
+      tags: [aide]
+
+    - name: Configure fail2ban
+      copy:
+        content: |
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          logpath = /var/log/auth.log
+          maxretry = 3
+          bantime = 3600
+        dest: /etc/fail2ban/jail.d/sshd.conf
+        mode: '0644'
+      notify: restart fail2ban
+      tags: [fail2ban]
+
+    - name: Enable fail2ban
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+      tags: [fail2ban]
+
+    # 10. Compliance Reporting
+    - name: Generate CIS compliance report
+      command: lynis audit system --quiet
+      register: lynis_output
+      changed_when: false
+      tags: [compliance, reporting]
+
+    - name: Save compliance report
+      copy:
+        content: "{{ lynis_output.stdout }}"
+        dest: "/var/log/cis-compliance-{{ ansible_date_time.date }}.log"
+        mode: '0644'
+      tags: [compliance, reporting]
+
+  handlers:
+    - name: restart sshd
+      service:
+        name: sshd
+        state: restarted
+
+    - name: restart auditd
+      command: service auditd restart
+
+    - name: reload firewalld
+      command: firewall-cmd --reload
+
+    - name: restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted

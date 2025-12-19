@@ -1,0 +1,107 @@
+variable "prefix" {
+  description = "Prefix for resource naming"
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region for resources"
+  type        = string
+  default     = "eastus"
+}
+
+variable "vnet_address_space" {
+  description = "Address space for the virtual network"
+  type        = list(string)
+  default     = ["10.0.0.0/16"]
+}
+
+variable "subnets" {
+  description = "Map of subnets to create"
+  type = map(object({
+    address_prefix    = string
+    service_endpoints = optional(list(string), [])
+    delegation = optional(object({
+      name         = string
+      service_name = string
+      actions      = list(string)
+    }))
+    nsg_rules = optional(list(object({
+      name                       = string
+      priority                   = number
+      direction                  = string
+      access                     = string
+      protocol                   = string
+      source_port_range          = optional(string)
+      destination_port_range     = optional(string)
+      source_address_prefix      = optional(string)
+      destination_address_prefix = optional(string)
+    })), [])
+  }))
+  default = {
+    "public" = {
+      address_prefix    = "10.0.1.0/24"
+      service_endpoints = ["Microsoft.Storage"]
+      nsg_rules = [
+        {
+          name                   = "AllowHTTPSInbound"
+          priority               = 100
+          direction              = "Inbound"
+          access                 = "Allow"
+          protocol               = "Tcp"
+          source_port_range      = "*"
+          destination_port_range = "443"
+          source_address_prefix  = "*"
+          destination_address_prefix = "*"
+        }
+      ]
+    }
+    "private" = {
+      address_prefix    = "10.0.2.0/24"
+      service_endpoints = ["Microsoft.KeyVault", "Microsoft.Storage"]
+      nsg_rules         = []
+    }
+    "data" = {
+      address_prefix    = "10.0.3.0/24"
+      service_endpoints = ["Microsoft.Sql", "Microsoft.Storage"]
+      nsg_rules         = []
+    }
+  }
+}
+
+variable "enable_firewall" {
+  description = "Enable Azure Firewall"
+  type        = bool
+  default     = false
+}
+
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway for outbound connectivity"
+  type        = bool
+  default     = false
+}
+
+variable "enable_ddos_protection" {
+  description = "Enable DDoS Protection Plan"
+  type        = bool
+  default     = false
+}
+
+variable "private_dns_zones" {
+  description = "List of Private DNS zones to create"
+  type        = list(string)
+  default = [
+    "privatelink.blob.core.windows.net",
+    "privatelink.vaultcore.azure.net",
+    "privatelink.azurecr.io"
+  ]
+}
+
+variable "common_tags" {
+  description = "Common tags to apply to all resources"
+  type        = map(string)
+  default = {
+    Environment = "dev"
+    ManagedBy   = "Terraform"
+    Project     = "Infrastructure"
+  }
+}
