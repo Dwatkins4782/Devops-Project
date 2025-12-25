@@ -1,0 +1,130 @@
+elasticsearch:
+  enabled: true
+  replicas: 1
+  image:
+    repository: docker.elastic.co/elasticsearch/elasticsearch
+    tag: "8.11.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  service:
+    type: ClusterIP
+    port: 9200
+  env:
+    - name: discovery.type
+      value: single-node
+    - name: xpack.security.enabled
+      value: "false"
+    - name: ES_JAVA_OPTS
+      value: "-Xms1g -Xmx1g"
+
+logstash:
+  enabled: true
+  replicas: 1
+  image:
+    repository: docker.elastic.co/logstash/logstash
+    tag: "8.11.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  service:
+    type: ClusterIP
+    ports:
+      beats: 5044
+      tcp: 5000
+  config:
+    logstashYml: |
+      http.host: "0.0.0.0"
+      xpack.monitoring.enabled: false
+    pipelineConf: |
+      input {
+        beats {
+          port => 5044
+        }
+        tcp {
+          port => 5000
+          codec => json
+        }
+      }
+      
+      filter {
+        if [type] == "app" {
+          mutate {
+            add_field => { "environment" => "kubernetes" }
+          }
+        }
+        
+        # Parse JSON logs
+        if [message] =~ /^\{.*\}$/ {
+          json {
+            source => "message"
+          }
+        }
+        
+        # Add timestamp
+        date {
+          match => [ "timestamp", "ISO8601" ]
+          target => "@timestamp"
+        }
+      }
+      
+      output {
+        elasticsearch {
+          hosts => ["elasticsearch:9200"]
+          index => "logs-%{+YYYY.MM.dd}"
+        }
+        stdout {
+          codec => rubydebug
+        }
+      }
+
+kibana:
+  enabled: true
+  replicas: 1
+  image:
+    repository: docker.elastic.co/kibana/kibana
+    tag: "8.11.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  service:
+    type: LoadBalancer
+    port: 5601
+  env:
+    - name: ELASTICSEARCH_HOSTS
+      value: "http://elasticsearch:9200"
+    - name: SERVER_NAME
+      value: "kibana"
+
+filebeat:
+  enabled: true
+  image:
+    repository: docker.elastic.co/beats/filebeat
+    tag: "8.11.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "200m"

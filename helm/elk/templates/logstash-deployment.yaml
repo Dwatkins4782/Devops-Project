@@ -1,0 +1,59 @@
+{{- if .Values.logstash.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "elk.fullname" . }}-logstash
+  labels:
+    {{- include "elk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logstash
+spec:
+  replicas: {{ .Values.logstash.replicas }}
+  selector:
+    matchLabels:
+      {{- include "elk.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: logstash
+  template:
+    metadata:
+      labels:
+        {{- include "elk.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: logstash
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/logstash-configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+      - name: logstash
+        image: "{{ .Values.logstash.image.repository }}:{{ .Values.logstash.image.tag }}"
+        imagePullPolicy: {{ .Values.logstash.image.pullPolicy }}
+        ports:
+        - name: beats
+          containerPort: 5044
+          protocol: TCP
+        - name: tcp
+          containerPort: 5000
+          protocol: TCP
+        resources:
+          {{- toYaml .Values.logstash.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /usr/share/logstash/config/logstash.yml
+          subPath: logstash.yml
+        - name: config
+          mountPath: /usr/share/logstash/pipeline/pipeline.conf
+          subPath: pipeline.conf
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 9600
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 9600
+          initialDelaySeconds: 90
+          periodSeconds: 30
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "elk.fullname" . }}-logstash
+{{- end }}

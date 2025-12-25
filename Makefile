@@ -37,7 +37,9 @@ endif
 
 build: ## Build the Docker image
 ifeq ($(DETECTED_OS),Windows)
-	@Write-Host "🔨 Building Docker image..." -ForegroundColor Cyan; docker build -t $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) ./app; kind load docker-image $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) --name devops-cluster
+	@powershell -Command "Write-Host 'Building Docker image...' -ForegroundColor Cyan"
+	@docker build -t $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) ./app
+	@kind load docker-image $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG) --name devops-cluster
 else
 	@echo "🔨 Building Docker image..."
 	@REGISTRY=$(REGISTRY) IMAGE_NAME=$(IMAGE_NAME) IMAGE_TAG=$(IMAGE_TAG) ./scripts/build-and-push.sh
@@ -62,7 +64,34 @@ else
 	@./scripts/deploy-observability.sh
 endif
 
-all: setup build deploy observability ## Set up everything (cluster, build, deploy, observability)
+elk: ## Deploy ELK Stack for centralized logging
+ifeq ($(DETECTED_OS),Windows)
+	@powershell -Command "Write-Host 'Deploying ELK Stack...' -ForegroundColor Cyan"
+	@helm upgrade --install elk-stack ./helm/elk --namespace monitoring --create-namespace --wait --timeout 10m
+	@powershell -Command "Write-Host 'ELK Stack deployed!' -ForegroundColor Green"
+	@powershell -Command "Write-Host 'Access Kibana: kubectl port-forward svc/kibana 5601:5601 -n monitoring' -ForegroundColor Yellow"
+else
+	@echo "📝 Deploying ELK Stack..."
+	@./scripts/deploy-elk.sh
+endif
+
+elk-local: ## Run ELK Stack locally with Docker Compose
+	@echo "📝 Starting ELK Stack locally..."
+	@docker-compose -f docker-compose.elk.yml up -d
+	@echo "✅ ELK Stack started! Kibana: http://localhost:5601"
+
+elk-stop: ## Stop local ELK Stack
+	@echo "🛑 Stopping ELK Stack..."
+	@docker-compose -f docker-compose.elk.yml down
+
+elk-logs: ## Show ELK Stack logs
+	@kubectl logs -n monitoring -l app.kubernetes.io/name=elk-stack --tail=50 -f
+
+elk-uninstall: ## Uninstall ELK Stack from Kubernetes
+	@echo "🗑️ Uninstalling ELK Stack..."
+	@helm uninstall elk-stack -n monitoring
+
+all: setup build deploy observability elk ## Set up everything (cluster, build, deploy, observability, ELK)
 	@echo "✅ Complete environment is ready!"
 
 teardown: ## Tear down the entire environment
@@ -99,6 +128,10 @@ port-forward-grafana: ## Port forward to Grafana
 port-forward-prometheus: ## Port forward to Prometheus
 	@echo "🔗 Port forwarding to Prometheus..."
 	@kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090
+
+port-forward-kibana: ## Port forward to Kibana
+	@powershell -Command "Write-Host 'Port forwarding to Kibana...' -ForegroundColor Cyan"
+	@kubectl port-forward -n monitoring svc/kibana 5601:5601
 
 logs: ## Show application logs
 	@kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/name=devops-app --tail=50 -f

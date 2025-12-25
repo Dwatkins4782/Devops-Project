@@ -1,0 +1,19 @@
+{{- if .Values.kibana.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  labels:
+    {{- include "elk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kibana
+spec:
+  type: {{ .Values.kibana.service.type }}
+  ports:
+  - port: {{ .Values.kibana.service.port }}
+    targetPort: 5601
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "elk.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: kibana
+{{- end }}

@@ -1,0 +1,14 @@
+{{- if .Values.logstash.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "elk.fullname" . }}-logstash
+  labels:
+    {{- include "elk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logstash
+data:
+  logstash.yml: |
+    {{- .Values.logstash.config.logstashYml | nindent 4 }}
+  pipeline.conf: |
+    {{- .Values.logstash.config.pipelineConf | nindent 4 }}
+{{- end }}

@@ -1,0 +1,23 @@
+{{- if .Values.logstash.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  labels:
+    {{- include "elk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: logstash
+spec:
+  type: {{ .Values.logstash.service.type }}
+  ports:
+  - port: {{ .Values.logstash.service.ports.beats }}
+    targetPort: 5044
+    protocol: TCP
+    name: beats
+  - port: {{ .Values.logstash.service.ports.tcp }}
+    targetPort: 5000
+    protocol: TCP
+    name: tcp
+  selector:
+    {{- include "elk.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: logstash
+{{- end }}

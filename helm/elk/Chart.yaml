@@ -1,0 +1,14 @@
+apiVersion: v2
+name: elk-stack
+description: ELK Stack for centralized logging and monitoring
+type: application
+version: 1.0.0
+appVersion: "8.11.0"
+keywords:
+  - elasticsearch
+  - logstash
+  - kibana
+  - logging
+  - monitoring
+maintainers:
+  - name: DevOps Team
